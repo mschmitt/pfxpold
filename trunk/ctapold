@@ -1,0 +1,337 @@
+#!/usr/bin/perl -w
+# $Id$
+use strict;
+use IO::Socket;
+use Unix::Syslog qw(:macros :subs);
+use Fcntl qw(:flock);
+use POSIX qw(:sys_wait_h setsid setuid setgid);
+use Time::HiRes qw(gettimeofday tv_interval);
+#use Data::Dumper;
+
+# CTA Policy Daemon for Postfix
+# Martin Schmitt <martin.schmitt@porsche.de>
+
+# Debugging features:
+# Set environment NOFORK=1 to run in foreground 
+# Set environment DEBUG=1 to enable submission of debug messages to Syslog
+# e.g. like this: NOFORK=1 DEBUG=1 /opt/ctapold/ctapold
+my ($dontfork, $log_debug);
+$dontfork  = 1 if ($ENV{'NOFORK'});
+$log_debug = 1 if ($ENV{'DEBUG'});
+
+# Root directory, where app resides
+my $instroot = "/opt/ctapold";
+
+# Chroot target
+my $chroot = "/var/spool/postfix";
+
+# UID/GID that the script will run as
+my $runas_user  = "nobody";
+my $runas_group = "nobody";
+my $runas_uid   = getpwnam($runas_user);
+my $runas_gid   = getgrnam($runas_group);
+
+# IP and Port to bind to
+my $bind_ip     = "127.0.0.1";
+my $bind_port   = 9998;    # From the postfix.org examples
+
+# The compiled configuration file, seen from within chroot
+my $policyfile  = "/etc/ctapolicy.conf";
+# Initial timestamp for checks whether the policy needs to be read
+my $policy_time = 0;
+# Datastructure holding the policy itself.
+my %policy;
+
+# The lock-/pidfile
+my $lockfile = "$instroot/cta.lock";
+
+# Start logging to syslog
+my $syslog_id       = "ctapold";
+my $syslog_facility = LOG_MAIL;
+Unix::Syslog::openlog($syslog_id, LOG_NOWAIT|LOG_PID, $syslog_facility);
+
+# Open Pidfile, write PID and lock it. 
+open my $lock_fh, ">$lockfile" or do { dolog ('warning', "Could not create $lockfile: $!"); exit 1; };
+if (flock($lock_fh,LOCK_EX|LOCK_NB)){
+        dolog('debug', "Lockfile created: $lockfile") if ($log_debug);
+}else{
+        close $lock_fh;
+        dolog('warning', "Another instance of ctapold seems to be running! Aborted."); 
+        exit 1;
+}
+# $$ is the PID of the current process:
+print $lock_fh "$$\n";
+# Flush the filehandle, perlfaq5:
+select((select($lock_fh), $| = 1)[0]); 
+dolog('debug', "PID is: $$") if ($log_debug);
+
+# Set up the socket
+my $socket = IO::Socket::INET->new (
+        LocalAddr  => $bind_ip,
+        LocalPort  => $bind_port,
+        Type       => SOCK_STREAM,
+	Reuse	   => 1,
+        Listen     => 1
+        ) or do {
+                dolog ('warning', "Died while creating socket on $bind_ip:$bind_port: $!");
+                exit 1;
+        };
+
+# Fork unless told otherwise
+unless ($dontfork){
+        fork && exit;
+	seek ($lock_fh, 0, 0);
+	print $lock_fh "$$\n";
+	select((select($lock_fh), $| = 1)[0]); 
+	dolog('debug', "Forked. New PID: $$") if ($log_debug);
+	chdir ('/');
+        open STDIN,  "/dev/null"  or die "STDIN </dev/null: $!\n";
+        open STDOUT, ">/dev/null" or die "STDOUT >/dev/null: $!\n";
+        open STDERR, ">/dev/null" or die "STDERR >/dev/null: $!\n";
+        setsid();
+}
+
+### chrooted and unprivileged operation starts here
+
+# Disappear into chroot
+chroot($chroot);
+
+# Drop privileges. 
+dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($runas_gid).") if ($log_debug);
+setuid ($runas_uid);
+setgid ($runas_gid);
+dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
+
+
+# Prepare myself for the main loop
+my $killed = 0;
+my $signal;
+my %children;
+$SIG{CHLD} = \&reaper;
+$SIG{TERM} = sub { $killed = 1; $signal = "TERM"; };
+$SIG{INT}  = sub { $killed = 1; $signal = "INT"; };
+
+dolog('info', "ctapold is up and running.");
+
+# Run the main loop until I get killed
+# This works alright, but needs to be reviewed.
+# The problem is: 
+# While the children are working the innermost (getline()) while loop,
+# the parent keeps working the outer while() loop,
+# receives SIGTERM (-15) and kills the children
+# while they are still communicating with their clients.
+# This should be handled differently for -15 and -9.
+while (0 == $killed){
+	while (my $client = $socket->accept){
+		dolog('debug', "Awaiting connection.") if ($log_debug);
+		# Re-read policy if required
+		%policy = %{policy_read()} if (policy_check_reread());
+		my $child = fork();
+		if (0 != $child){
+			dolog('debug', "Forked. Child is $child.") if ($log_debug);
+			# Parent does nothing but keep track of children
+			$children{$child} = $child;
+			close $client;
+		}else{
+			# Child has the connection and handles it.
+			close $socket;
+
+			my $t0 = [gettimeofday];
+			dolog('info', "Client connected.");
+
+			# Process the query
+			my %querydata = ();
+			while (my $in = $client->getline()){
+				chomp $in;
+				if ($in =~ /^$/){
+					dolog('debug', "Client done sending data") if ($log_debug);
+					my $response = do_check(\%querydata);
+					dolog('debug', "My response is: $response") if ($log_debug);
+					$client->printflush("action=$response\n\n");
+					%querydata = ();
+				}else{
+					dolog('debug', "Received line from client: $in") if ($log_debug);
+					my ($key, $value) = split /=/, $in;
+					$querydata{$key} = $value;
+				}
+			}
+			close $client;
+			my $elapsed = sprintf ("%.2f", tv_interval($t0, [gettimeofday]));
+			dolog('info', "Client disconnected after $elapsed seconds.");
+			exit;
+		}
+		last if ($killed);
+	}
+	last if ($killed);
+}
+
+dolog('info', "Killed! (By $signal signal.)\n");
+
+# Jetzt gehts euch an den Kragen, Kinder.
+foreach my $child (keys(%children)){
+        dolog('debug', "Killing my children.") if ($log_debug);
+        $children{$child} = 0;
+        while ( kill 0 => $child){
+                dolog('debug', "Sending $child the TERM signal.") if ($log_debug);
+                kill TERM => $child;
+                if ($children{$child}++ > 5){
+                        dolog('debug', "Giving up on $child, sending $child the KILL signal.") if ($log_debug);
+                        kill KILL => $child;
+                        last;
+                }
+                if ( kill 0 => $child ){
+                        dolog('debug', "Failed to kill $child.") if ($log_debug);
+                }else{
+                        dolog('debug', "Killed $child.") if ($log_debug);
+                }
+        }
+}
+
+# Clean up behind me.
+close $socket;
+close $lock_fh;
+unlink $lockfile;
+dolog('info', "Exiting.\n");
+Unix::Syslog::closelog;
+exit;
+
+			
+# Check the data received from Postfix
+sub do_check{
+	my %querydata = %{shift @_};
+	
+	my $from;
+	if ($querydata{'sender'}){
+		$from = lc($querydata{'sender'});
+	}else{
+		$from = '<>';   # Bounce
+	}
+	my $to   = lc($querydata{'recipient'});
+		
+	my $origin1 = $querydata{'client_address'};
+	my $origin2 = lc($querydata{'client_name'});
+
+	return "Need more input!" unless ($from and $to and ($origin1 or $origin2));
+
+	my $t0 = [gettimeofday];
+
+	# Re-read policy if required
+	%policy = %{policy_read()} if (policy_check_reread());
+
+	my $action = "REJECT Sorry, this combination of sender, recipient and originating system does not match any of my policies.";
+	my $logmsg = "CTA-REJECT: ip=$origin1 name=$origin2 from=$from to=$to";
+	foreach my $check_origin (keys(%policy)){
+		# Gleich weiter zum nächsten, wenn Host oder IP nicht freigegeben sind
+		no warnings;
+		dolog('debug', "Checking origin: ip=$origin1 name=$origin2") if ($log_debug);
+		next unless (($origin1 =~ /^$check_origin$/) or ($origin2 =~ /^$check_origin$/));
+		use warnings;
+		
+		# Jetzt die zu diesem Origin hinterlegten Regeln durchgehen
+		my @rules = @{$policy{$check_origin}};
+		foreach my $rule(@rules){
+			my $check_from  = $rule->{'from'};
+			my $check_to    = $rule->{'to'};
+			my $application = $rule->{'application'};
+			
+			# Handelt es sich um ein Bounce an den freigebenen Absender?
+			# Jedoch nicht bei Rootmails, denn dort ist jeder Absender freigegeben.
+			dolog('debug', "Checking for bounce from <> to $check_from") if ($log_debug);
+			if (($application ne "Rootmails") and ($from eq '<>') and ($to =~ /^$check_from$/)){
+				$action = "OK";
+				$logmsg = "CTA-PERMIT: ip=$origin1 name=$origin2 from=$from to=$to rule=$application (Bounce)";
+				last;
+			}
+			# Weiter zum nächsten, wenn der Absender nicht freigegeben ist
+			dolog('debug', "Checking sender: $from") if ($log_debug);
+			next unless ($from =~ /^$check_from$/);
+			# Weiter zum nächsten, wenn der Empfänger nicht freigegeben ist
+			dolog('debug', "Checking recipient: $to") if ($log_debug);
+			next unless ($to =~ /^$check_to$/);
+			# Wer hier ankommt, hat den Test bestanden.
+			$action = "OK";
+			$logmsg = "CTA-PERMIT: ip=$origin1 name=$origin2 from=$from to=$to rule=$application";
+			last;
+		}
+	}
+	my $elapsed = sprintf("%.2f", tv_interval($t0, [gettimeofday]));
+	dolog('info', "$logmsg delay=$elapsed");
+	return $action;
+}
+
+sub dolog{
+        my $severity = shift; # ('debug'|'info'|'warning')
+        my $message  = shift;
+        chomp $message;
+        printf STDERR ("%8s: %s\n", $severity, $message);
+        $message =~ s/\%/\%\%/g;
+
+        if ($severity eq "debug"){
+                $severity = LOG_DEBUG;
+        }elsif($severity eq "info"){
+                $severity = LOG_INFO;
+        }elsif($severity eq "warning"){
+                $severity = LOG_WARNING;
+        }else{
+                $severity = LOG_INFO;
+        }
+
+        Unix::Syslog::syslog($severity, $message);
+}
+
+sub reaper{
+        foreach (keys(%children)){
+                if(my $pid = waitpid($_, WNOHANG)){
+                        delete $children{$pid};
+			my $children = scalar(keys(%children));
+			my $exitasap = "";
+			$exitasap = " (exiting)" if ($killed);
+                        dolog('debug', "Reaped $pid. $children children left.$exitasap") if ($log_debug);
+                }
+        }
+}
+
+sub policy_check_reread{
+	dolog('debug', "Get mtime of $policyfile.") if ($log_debug);
+	my $mtime = (stat $policyfile)[9] or die "stat($policyfile) failed: $!\n";
+	dolog('debug', "$policyfile timestamp: $mtime (".localtime($mtime).")") if ($log_debug);
+	if ($mtime > $policy_time){
+		dolog('debug', "Policy re-read required.") if ($log_debug);
+		return 1;
+	}else{
+		dolog('debug', "Policy re-read not required.") if ($log_debug);
+		return 0;
+	}
+}
+
+sub policy_read{
+	my %data;
+	my $t0 = [gettimeofday];
+	my $rulecount = 0;
+	dolog('debug', "Reading policy from $policyfile.") if ($log_debug);
+	open my $fh, "<$policyfile" or die "Can't open $policyfile: $!\n";
+	while (my $line = <$fh>){
+		next if ($line =~ /^\s*(#|$)/);
+		chomp $line;
+		# make compatible with old and new compiled policy format
+		# Remove this in next development cycle.
+		my ($origin, $from, $to, $application, $client, $contact);
+		# perlfaq4, "number of occurences of a substring"
+		if (3 == ($line =~ tr/:/:/)){
+			($origin, $from, $to, $application) = split /:/, $line;
+			$contact = '-';
+		}elsif(5 == ($line =~ tr/:/:/)){
+			($origin, $from, $to, $application, $client, $contact) = split /:/, $line;
+		}else{
+			dolog('warning', "Can't parse line $. from $policyfile: Wrong number of fields.");
+		}
+		push @{$data{$origin}}, {'from' => $from, 'to' => $to, 'application' => $application, 'client' => $client, 'contact' => $contact };
+		$rulecount++;
+	}
+	my $rules   = scalar(keys(%data));
+	my $elapsed = sprintf("%.2f", tv_interval($t0, [gettimeofday]));
+	dolog('info', "Read $rulecount policy rules ($rules hosts) in $elapsed seconds.");
+	close $fh;
+	$policy_time = (stat $policyfile)[9] or die "stat($policyfile) failed: $!\n";
+	return \%data;
+}
