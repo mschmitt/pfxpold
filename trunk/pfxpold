@@ -110,7 +110,7 @@ dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid)."
 
 # Instantiate the check class in unprivileged and chroot context.
 # So the class can re-initialize itself during runtime.
-dolog('debug', "Calling out to PFXCheck.");
+dolog('debug', "Calling out to PFXCheck.") if ($log_debug);
 my $check_handle = PFXCheck->new();
 
 # Prepare myself for the main loop
@@ -207,6 +207,10 @@ exit;
 sub dolog{
         my $severity = shift; # ('debug'|'info'|'warning')
         my $message  = shift;
+	# Exit immediately if $log_debug is not set, to save CPU.
+	if ($severity eq "debug"){
+		return undef unless ($log_debug);
+	}
         chomp $message;
         printf STDERR ("%8s: %s\n", $severity, $message);
         $message =~ s/\%/\%\%/g;
