@@ -1,15 +1,27 @@
 package PFXCheck;
 use strict;
 use warnings;
-
 use Data::Dumper;
+use DBI;
 
 our $VERSION = '0.01';
 
 sub new(){
 	my $class = shift;
 	my $self  = {};
-	&main::dolog("debug", "PFXCheck instantiated.");
+	our $log_debug;
+	&main::dolog("debug", "PFXCheck instantiated.") if ($log_debug);
+	my $db_host = 'localhost';
+	my $db_name = 'martin_test';
+	my $db_user = 'smtpusr';
+	my $db_pass = '';
+	$self->{'dbh'} = DBI->connect_cached("DBI:mysql:$db_name", 
+		$db_user, $db_pass, { RaiseError => 0, PrintError => 0 });
+	if ($DBI::err){
+		&main::dolog("error", "Error connecting to database: $DBI::errstr");
+		exit 1;
+	}
+	&main::dolog("debug", "Database connection established.") if ($log_debug);
 	bless $self;
 }
 
