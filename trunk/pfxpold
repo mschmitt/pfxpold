@@ -98,7 +98,7 @@ if ($chroot){
 	chroot($chroot) or die "Can't chroot to: $chroot\n";;
 	dolog('info', "Chrooted to: $chroot");
 }else{
-	dolog('info', "Not chrooting on admin request.");
+	dolog('info', "Not chrooting: chrooting is disabled.");
 }
 	
 
