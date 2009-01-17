@@ -148,20 +148,20 @@ while (0 == $killed){
 			dolog('info', "Client connected.");
 
 			# Process the query
-			my %querydata = ();
+			my $querydata = ();
 			while (my $in = $client->getline()){
 				chomp $in;
 				if ($in =~ /^$/){
 					dolog('debug', "Client done sending data");
-					my $response = $check_handle->do_check(\%querydata);
+					my $response = $check_handle->do_check($querydata);
 					dolog('debug', "My response is: $response");
 					$client->printflush("action=$response\n\n");
-					%querydata = ();
+					$querydata = {};
 				}else{
 					$in = lc($in);
 					dolog('debug', "Received line from client: $in");
 					my ($key, $value) = split /=/, $in;
-					$querydata{$key} = $value;
+					$querydata->{$key} = $value;
 				}
 			}
 			close $client;
