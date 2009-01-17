@@ -9,8 +9,7 @@ our $VERSION = '0.01';
 sub new(){
 	my $class = shift;
 	my $self  = {};
-	our $log_debug;
-	&main::dolog("debug", "PFXCheck instantiated.") if ($log_debug);
+	&main::dolog("debug", "PFXCheck instantiated.");
 	my $db_host = 'localhost';
 	my $db_name = 'martin_test';
 	my $db_user = 'smtpusr';
@@ -21,7 +20,7 @@ sub new(){
 		&main::dolog("error", "Error connecting to database: $DBI::errstr");
 		exit 1;
 	}
-	&main::dolog("debug", "Database connection established.") if ($log_debug);
+	&main::dolog("debug", "Database connection established.");
 	bless $self;
 }
 

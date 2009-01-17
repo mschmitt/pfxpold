@@ -51,7 +51,7 @@ Unix::Syslog::openlog($syslog_id, LOG_NOWAIT|LOG_PID, $syslog_facility);
 # Open Pidfile, write PID and lock it. 
 open my $lock_fh, ">$lockfile" or do { dolog ('warning', "Could not create $lockfile: $!"); exit 1; };
 if (flock($lock_fh,LOCK_EX|LOCK_NB)){
-        dolog('debug', "Lockfile created: $lockfile") if ($log_debug);
+        dolog('debug', "Lockfile created: $lockfile");
 }else{
         close $lock_fh;
         dolog('warning', "Another instance of pfxpold seems to be running! Aborted."); 
@@ -62,7 +62,7 @@ print $lock_fh "$$\n";
 
 # Flush the lockfile's filehandle, perlfaq5:
 select((select($lock_fh), $| = 1)[0]); 
-dolog('debug', "PID is: $$") if ($log_debug);
+dolog('debug', "PID is: $$");
 
 # Set up the socket
 my $socket = IO::Socket::INET->new (
@@ -83,7 +83,7 @@ unless ($dontfork){
 	seek ($lock_fh, 0, 0);
 	print $lock_fh "$$\n";
 	select((select($lock_fh), $| = 1)[0]);  # perlfaq5
-	dolog('debug', "Forked. New PID: $$") if ($log_debug);
+	dolog('debug', "Forked. New PID: $$");
 	chdir ('/');
         open STDIN,  "/dev/null"  or die "STDIN </dev/null: $!\n";
         open STDOUT, ">/dev/null" or die "STDOUT >/dev/null: $!\n";
@@ -103,14 +103,14 @@ if ($chroot){
 	
 
 # Drop privileges. 
-dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($runas_gid).") if ($log_debug);
+dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($runas_gid).");
 setgid ($runas_gid) or die "Can't setgid ($runas_gid)!\n";
 setuid ($runas_uid) or die "Can't setuid ($runas_uid)!\n";
 dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
 
 # Instantiate the check class in unprivileged and chroot context.
 # So the class can re-initialize itself during runtime.
-dolog('debug', "Calling out to PFXCheck.") if ($log_debug);
+dolog('debug', "Calling out to PFXCheck.");
 my $check_handle = PFXCheck->new();
 
 # Prepare myself for the main loop
@@ -133,10 +133,10 @@ dolog('info', "pfxpold is up and running.");
 # This should be handled differently for -15 and -9.
 while (0 == $killed){
 	while (my $client = $socket->accept){
-		dolog('debug', "Awaiting connection.") if ($log_debug);
+		dolog('debug', "Awaiting connection.");
 		my $child = fork();
 		if (0 != $child){
-			dolog('debug', "Forked. Child is $child.") if ($log_debug);
+			dolog('debug', "Forked. Child is $child.");
 			# Parent does nothing but keep track of children
 			$children{$child} = $child;
 			close $client;
@@ -152,14 +152,14 @@ while (0 == $killed){
 			while (my $in = $client->getline()){
 				chomp $in;
 				if ($in =~ /^$/){
-					dolog('debug', "Client done sending data") if ($log_debug);
+					dolog('debug', "Client done sending data");
 					my $response = $check_handle->do_check(\%querydata);
-					dolog('debug', "My response is: $response") if ($log_debug);
+					dolog('debug', "My response is: $response");
 					$client->printflush("action=$response\n\n");
 					%querydata = ();
 				}else{
 					$in = lc($in);
-					dolog('debug', "Received line from client: $in") if ($log_debug);
+					dolog('debug', "Received line from client: $in");
 					my ($key, $value) = split /=/, $in;
 					$querydata{$key} = $value;
 				}
@@ -178,20 +178,20 @@ dolog('info', "Killed! (By $signal signal.)\n");
 
 # Main loop has ended. Now take care of the children. And kill them.
 foreach my $child (keys(%children)){
-        dolog('debug', "Killing my children.") if ($log_debug);
+        dolog('debug', "Killing my children.");
         $children{$child} = 0;
         while ( kill 0 => $child){
-                dolog('debug', "Sending $child the TERM signal.") if ($log_debug);
+                dolog('debug', "Sending $child the TERM signal.");
                 kill TERM => $child;
                 if ($children{$child}++ > 5){
-                        dolog('debug', "Giving up on $child, sending $child the KILL signal.") if ($log_debug);
+                        dolog('debug', "Giving up on $child, sending $child the KILL signal.");
                         kill KILL => $child;
                         last;
                 }
                 if ( kill 0 => $child ){
-                        dolog('debug', "Failed to kill $child.") if ($log_debug);
+                        dolog('debug', "Failed to kill $child.");
                 }else{
-                        dolog('debug', "Killed $child.") if ($log_debug);
+                        dolog('debug', "Killed $child.");
                 }
         }
 }
@@ -234,7 +234,7 @@ sub reaper{
 			my $children = scalar(keys(%children));
 			my $exitasap = "";
 			$exitasap = " (exiting)" if ($killed);
-                        dolog('debug', "Reaped $pid. $children children left.$exitasap") if ($log_debug);
+                        dolog('debug', "Reaped $pid. $children children left.$exitasap");
                 }
         }
 }
