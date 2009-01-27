@@ -6,6 +6,8 @@ use Unix::Syslog qw(:macros :subs);
 use Fcntl qw(:flock);
 use POSIX qw(:sys_wait_h setsid setuid setgid);
 use Time::HiRes qw(gettimeofday tv_interval);
+
+# Where to find the authentication module
 use FindBin qw($Bin);
 use lib qw($Bin);
 use PFXCheck;
@@ -108,6 +110,9 @@ setgid ($runas_gid) or die "Can't setgid ($runas_gid)!\n";
 setuid ($runas_uid) or die "Can't setuid ($runas_uid)!\n";
 dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
 
+# Set a "beautiful" process list entry
+$0 = "pfxpold (parent)";
+
 # Instantiate the check class in unprivileged and chroot context.
 # So the class can re-initialize itself during runtime.
 dolog('debug', "Calling out to PFXCheck.");
@@ -143,6 +148,9 @@ while (0 == $killed){
 		}else{
 			# Child has the connection and handles it.
 			close $socket;
+
+			# Set a "beautiful" process list entry
+			$0 = "pfxpold (child)";
 
 			my $t0 = [gettimeofday];
 			dolog('info', "Client connected.");
