@@ -4,6 +4,8 @@ use warnings;
 
 our $VERSION = '0.01';
 
+# Sample check plugin that randomly accepts or denies requests
+
 sub new(){
 	my $class = shift;
 	my $self  = {};
