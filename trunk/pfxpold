@@ -9,7 +9,7 @@ use Time::HiRes qw(gettimeofday tv_interval);
 
 # Where to find the authentication module
 use FindBin qw($Bin);
-use lib "$Bin/examples";
+use lib "$Bin";
 
 # The authentication module itself
 use PFXCheck;
