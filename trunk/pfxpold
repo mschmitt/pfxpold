@@ -9,11 +9,26 @@ use Time::HiRes qw(gettimeofday tv_interval);
 
 # Where to find the authentication module
 use FindBin qw($Bin);
-use lib qw($Bin);
+use lib "$Bin/examples";
+
+# The authentication module itself
 use PFXCheck;
 
 # pfxpold: The Postfix Extensible Policy Daemon
-# Martin Schmitt (Schmitt Systems) <mas@scsy.de>
+#
+# Copyright (c) 2009, Martin Schmitt <mas at scsy dot de>
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 # Debugging features:
 # Set environment NOFORK=1 to run in foreground 
@@ -31,13 +46,16 @@ die "pfxpold must be run as root and will drop privileges by itself.\n" unless (
 
 # Chroot target. Leave empty to disable chrooting.
 my $chroot = "";
-# my $chroot = "/var/spool/postfix";
+#my $chroot = "/var/spool/postfix";
 
-# UID/GID that the script will run as
+# User that the script will run as
 my $runas_user  = "nobody";
-my $runas_group = "nogroup";
-my $runas_uid   = getpwnam($runas_user) or die "No such user: $runas_user\n";
-my $runas_gid   = getgrnam($runas_group) or die "No such user: $runas_group\n";;
+
+# Find the corresponding group
+my @runas_info  = getpwnam($runas_user) or die "No such user: $runas_user\n";
+my $runas_uid   = $runas_info[2];
+my $runas_gid   = $runas_info[3];
+my $runas_group = (getgrgid($runas_gid))[0];
 
 # IP and Port to bind to
 my $bind_ip     = "127.0.0.1";
@@ -129,13 +147,6 @@ $SIG{INT}  = sub { $killed = 1; $signal = "INT"; };
 dolog('info', "pfxpold is up and running.");
 
 # Run the main loop until I get killed
-# This works alright, but needs to be reviewed.
-# The problem is: 
-# While the children are working the innermost (getline()) while loop,
-# the parent keeps working the outer while() loop,
-# receives SIGTERM (-15) and kills the children
-# while they are still communicating with their clients.
-# This should be handled differently for -15 and -9.
 while (0 == $killed){
 	while (my $client = $socket->accept){
 		dolog('debug', "Awaiting connection.");
