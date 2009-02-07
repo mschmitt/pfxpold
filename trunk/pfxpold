@@ -1,10 +1,11 @@
 #!/usr/bin/perl -w
 # $Id$
 use strict;
+use English;
 use IO::Socket;
 use Unix::Syslog qw(:macros :subs);
 use Fcntl qw(:flock);
-use POSIX qw(:sys_wait_h setsid setuid setgid);
+use POSIX qw(:sys_wait_h setsid);
 use Time::HiRes qw(gettimeofday tv_interval);
 
 # Where to find the authentication module
@@ -77,12 +78,11 @@ if (flock($lock_fh,LOCK_EX|LOCK_NB)){
         dolog('warning', "Another instance of pfxpold seems to be running! Aborted."); 
         exit 1;
 }
-# $$ is the PID of the current process:
-print $lock_fh "$$\n";
+print $lock_fh "$PID\n";
 
 # Flush the lockfile's filehandle, perlfaq5:
-select((select($lock_fh), $| = 1)[0]); 
-dolog('debug', "PID is: $$");
+select((select($lock_fh), $OUTPUT_AUTOFLUSH = 1)[0]); 
+dolog('debug', "PID is: $PID");
 
 # Set up the socket
 my $socket = IO::Socket::INET->new (
@@ -101,9 +101,9 @@ unless ($dontfork){
         fork && exit;
 	# Update lockfile with PID of forked process
 	seek ($lock_fh, 0, 0);
-	print $lock_fh "$$\n";
-	select((select($lock_fh), $| = 1)[0]);  # perlfaq5
-	dolog('debug', "Forked. New PID: $$");
+	print $lock_fh "$PID\n";
+	select((select($lock_fh), $OUTPUT_AUTOFLUSH = 1)[0]);  # perlfaq5
+	dolog('debug', "Forked. New PID: $PID");
 	chdir ('/');
         open STDIN,  "/dev/null"  or die "STDIN </dev/null: $!\n";
         open STDOUT, ">/dev/null" or die "STDOUT >/dev/null: $!\n";
@@ -116,6 +116,7 @@ unless ($dontfork){
 # Disappear into chroot
 if ($chroot){
 	chroot($chroot) or die "Can't chroot to: $chroot\n";;
+	chdir('/');
 	dolog('info', "Chrooted to: $chroot");
 }else{
 	dolog('info', "Not chrooting: chrooting is disabled.");
@@ -124,8 +125,11 @@ if ($chroot){
 
 # Drop privileges. 
 dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($runas_gid).");
-setgid ($runas_gid) or die "Can't setgid ($runas_gid)!\n";
-setuid ($runas_uid) or die "Can't setuid ($runas_uid)!\n";
+$GID = $EGID = "$runas_gid $runas_gid";
+$UID = $EUID = "$runas_uid";
+if (($GID ne "$runas_gid $runas_gid") or ($UID ne "$runas_uid")){
+	die "Can't drop privileges to user/group: $runas_user/$runas_group. Aborting.\n";
+}
 dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
 
 # Set a "beautiful" process list entry
