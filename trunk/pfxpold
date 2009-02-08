@@ -131,8 +131,13 @@ dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($run
 # $) = $EGID
 $( = $) = "$runas_gid $runas_gid";
 $< = $> = "$runas_uid";
-if (($( ne "$runas_gid $runas_gid") or ($< ne "$runas_uid")){
-	die "Can't drop privileges to user/group: $runas_user/$runas_group. Aborting.\n";
+if (
+	($< ne "$runas_uid")		or
+	($> ne "$runas_uid")		or
+	($( ne "$runas_gid $runas_gid") or 
+	($) ne "$runas_gid $runas_gid") 
+){
+	die "Failed to drop privileges to: $runas_user/$runas_group. Aborting.\n";
 }
 dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
 
