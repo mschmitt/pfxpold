@@ -1,7 +1,6 @@
 #!/usr/bin/perl -w
 # $Id$
 use strict;
-use English;
 use IO::Socket;
 use Unix::Syslog qw(:macros :subs);
 use Fcntl qw(:flock);
@@ -78,11 +77,11 @@ if (flock($lock_fh,LOCK_EX|LOCK_NB)){
         dolog('warning', "Another instance of pfxpold seems to be running! Aborted."); 
         exit 1;
 }
-print $lock_fh "$PID\n";
+print $lock_fh "$$\n";
 
 # Flush the lockfile's filehandle, perlfaq5:
-select((select($lock_fh), $OUTPUT_AUTOFLUSH = 1)[0]); 
-dolog('debug', "PID is: $PID");
+select((select($lock_fh), $| = 1)[0]); 
+dolog('debug', "PID is: $$");
 
 # Set up the socket
 my $socket = IO::Socket::INET->new (
@@ -101,9 +100,9 @@ unless ($dontfork){
         fork && exit;
 	# Update lockfile with PID of forked process
 	seek ($lock_fh, 0, 0);
-	print $lock_fh "$PID\n";
-	select((select($lock_fh), $OUTPUT_AUTOFLUSH = 1)[0]);  # perlfaq5
-	dolog('debug', "Forked. New PID: $PID");
+	print $lock_fh "$$\n";
+	select((select($lock_fh), $| = 1)[0]);  # perlfaq5
+	dolog('debug', "Forked. New PID: $$");
 	chdir ('/');
         open STDIN,  "/dev/null"  or die "STDIN </dev/null: $!\n";
         open STDOUT, ">/dev/null" or die "STDOUT >/dev/null: $!\n";
@@ -125,9 +124,14 @@ if ($chroot){
 
 # Drop privileges. 
 dolog('debug', "Dropping privileges to $runas_user($runas_uid)/$runas_group($runas_gid).");
-$GID = $EGID = "$runas_gid $runas_gid";
-$UID = $EUID = "$runas_uid";
-if (($GID ne "$runas_gid $runas_gid") or ($UID ne "$runas_uid")){
+# I avoided "use English" (man perlvar) for GID/UID munging. Here's the key:
+# $< = $UID
+# $> = $EUID
+# $( = $GID
+# $) = $EGID
+$( = $) = "$runas_gid $runas_gid";
+$< = $> = "$runas_uid";
+if (($( ne "$runas_gid $runas_gid") or ($< ne "$runas_uid")){
 	die "Can't drop privileges to user/group: $runas_user/$runas_group. Aborting.\n";
 }
 dolog('info', "Now running as $runas_user($runas_uid)/$runas_group($runas_gid).");
