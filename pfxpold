@@ -1,6 +1,4 @@
 #!/usr/bin/perl -w
-# $Id$
-# Release 1.0
 use strict;
 use IO::Socket;
 use Unix::Syslog qw(:macros :subs);
