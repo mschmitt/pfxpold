@@ -191,7 +191,7 @@ while (0 == $killed){
 				}else{
 					$in = lc($in);
 					dolog('debug', "Received line from client: $in");
-					my ($key, $value) = split /=/, $in;
+					my ($key, $value) = split (/=/, $in, 2);
 					$querydata->{$key} = $value;
 				}
 			}

@@ -71,9 +71,19 @@ Then, in another terminal, test the functionality:
 
 SUPPORT
 
-Support is available through the pfxpold help forum on Sourceforge. Commercial
-support (especially for the creation of custom check plugins) can be made
-available.
+Support is available through the following channels:
+
+The pfxpold forums on Sourceforge: 
+
+	https://sourceforge.net/projects/pfxpold/forums
+
+The pfxpold issue tracker on Github:
+
+	http://github.com/mschmitt/pfxpold/issues
+
+Commercial support (especially for the creation of custom check plugins) can 
+be made available. See the license header of the pfxpold script for e-mail 
+contact information.
 
 HISTORY
 

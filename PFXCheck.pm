@@ -32,8 +32,8 @@ sub do_check($){
 
 	# Randomly accept the request
 	if (rand(0) > 0.5){
-		return "OK (you win!)";
 		&main::dolog("info", "PFX-PERMIT: client_name=$client_name client_address=$client_address sender=$sender");
+		return "OK (you win!)";
 	}
 
 	&main::dolog("info", "PFX-REJECT: client_name=$client_name client_address=$client_address sender=$sender");
